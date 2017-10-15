@@ -1,0 +1,473 @@
+---
+title: "Gather BEA"
+output: html_notebook
+---
+
+# Setup 
+
+## Housekeeping Note
+
+I find it good practice to start your script with a list of the packages you're using. The Setup section may also contain other options for R or RStudio including `knitr` options.
+
+## Packages
+
+```{r, message=FALSE}
+# Data Import ------------------------------------------------------------------
+library(readr)
+
+# Data Manipulation ------------------------------------------------------------
+library(dplyr)
+library(tidyr)
+
+# Variable Manipulation --------------------------------------------------------
+library(stringr)
+```
+
+
+# BEA Dataset
+
+## Housekeeping Note
+
+Be sure you have a data folder to keep all your raw or initial data. If you have many data files, then create sub folders within the main data folder.
+
+## Download the Data
+
+The [Bureau of Economic Analysis](https://www.bea.gov/index.htm) collects a wide variety of industrial data. (They are the ones who estimate US gross domestic product.) You can use their [Regional Economic Accounts: Download](https://www.bea.gov/regional/downloadzip.cfm) page to pull out all the relevant information. 
+
+<div style="width:400px; height=300px">
+![BEA Download Site](image/bea_download.png)
+</div>
+
+You can manually download the two tables (CA1 and CA6N) into your data folder. See the image below.
+
+![BEA Zipped Folders](image/bea_data_zip.png)
+
+Inside each zipped folder is a csv file containing all areas in the US plus files for each state. This is a little annoying because you have two copies of the same data. The BEA does this, I presume, to make it easier for people using Excel.
+
+![Inside The Zipped Folders](image/bea_data_inside.png)
+
+For this project, I pulled out the Missouri State file for each table and deleted the zipped folders. 
+
+![Keeping MO](image/bea_data_final.png)
+
+## Alternatives
+
+You have two alternatives to the above approach. First, you could work with the [BEA's API](https://www.bea.gov/API/bea_web_service_api_user_guide.htm) to build a function that interacts with the BEA's website. This way you can dynamically download only what you need for a specific project. 
+
+Second, you can maintain your own copies of the BEA's dataset on your own hard drive. In this case you would download all the tables and have R remove the state tables, keeping only the "ALL_AREAS.csv". (I use the second approach for my BEA work.)
+
+# BEA Import
+
+Once you have access to the data, it's time to load it into R (your computer's memory). 
+
+## Housekeeping Note
+
+Style guides are as important as grammar, without them it is hard to communicate to others or your future self. There are many R style guides out there: [Google](https://google.github.io/styleguide/Rguide.xml) as an R style guide for company use. The most important thing is to stick to one. I want you to follow [RStuido's Style Guide](http://adv-r.had.co.nz/Style.html).
+
+## BEA CA1
+
+Before you start pulling in data, you should first look at the structure and variables. Table CA1 includes GeoFIPS (the geographic identifier), GeoName, Region (there are eight BEA regions), Table, LineCode, IndustryClassification, Description, followed by every year available.
+
+![A Peek At CA1](image/ca1a_look.png)
+
+Also notice the four lines at the end. These are end notes.
+
+![A Peek At CA1: Bottom](image/ca1a_look_end.png)
+
+Downloaded BEA tables are arranged for viewing and printing. They are _not_ designed for analysis. You can avoid some of these problems if you use the BEA API. But this issue gives us a chance to practice our [tidy](http://vita.had.co.nz/papers/tidy-data.html) skills. 
+
+Problems To Deal With
+
+  * Variables and values are mixed up. (big deal)
+  * I don't like the variable names or some of the location names. (little deal)
+
+## Import CA1
+
+There are several things to consider when importing at dataset.
+
+  1. What function to use?
+    * The "CA1_1969_2015_MO.csv" file is comma delimited so `read_csv` is the appropriate function. 
+    * `read_csv` is a part of the `readr` package.
+  2. Where is the file and it the file zipped?
+    * The file is "data/CA1_1969_2015_MO.csv".
+    * The file option for `read_csv` is called `file`, which make sense. You can type `file = "data/CA1_1969_2015_MO.csv"`. Since `file` is in the first position you can type `"data/CA1_1969_2015_MO.csv"` in the first position without explicitly calling the `file` option.
+  3. Are there column names (variable names)? If there are, do you want to use the given names or provide your own names? If not, do you want to add your own or allow R to make them?
+    * The BEA does have it's own names. You can replace them with the `col_names` option.
+    * Just accept the the BEA names. We will change them later. 
+    * Keeping the column names requires the option `col_names = TRUE`, which is the default. There is no need to do anything.
+  4. What are the column types (variable types)?
+    * The first seven columns are character variables and the next 47 are double.
+    * `col_types` is the option to set the variable types. `col_types = NULL` will have R guess at the variable types by looking at the first 1,000 rows for each column. The option is often easy, but R may guess wrong and it is slow.
+    * `str_c(c(rep("c", 7), rep("d", 47)), collapse = "")` will set the correct column types.
+  5. What to do with blanks and variable notes?
+    * The BEA has notes for all it's missing values. Some values are hidden from the public. Instead of leaving the value blank the BEA may report, for example, "(D)". 
+    * `na` is the option for identifying missing values.
+    * There are no missing values in "CA1", so we can keep the default option value `na = c("", "NA")`.
+  6. Should you skip any lines?
+    * The `skip` option is used to skip rows. Sometimes this is helpful, but not needed in this case.
+    * The default option value is `skip = 0`.
+  7. Are there any comment lines in your data?
+    * There are comment lines in the BEA data. We should skip them and the `comment` option allow us to identify the comment lines to be ignored.
+    * Normally we should drop them, but I want to keep them for a different example.
+
+```{r}
+type_cols <- str_c(
+  c(
+    rep("c", 7),   # Character variables
+    rep("d", 47)), # Year variables
+  collapse = ""    # Collapse into compact
+  )
+
+data_ca1a <- read_csv(
+  "data/CA1_1969_2015_MO.csv", 
+  col_types = type_cols
+  )
+```
+
+(Notice the above warning notes after you import? There is a blank column that cannot be seen with Excel.)
+
+## Tidy CA1 Examples
+
+### Filter
+
+I had you keep the comments so I could show you how to use the `filter` function from the `dplyr` package. To do this you will also use `str_detect` function from the `stringr` package.
+
+```{r, eval=FALSE}
+data_ca1a$GeoFIPS
+```
+
+```{r, eval=FALSE}
+str_detect(
+  data_ca1a$GeoFIPS, 
+  "Note|CA1|Last|Source"
+  )
+```
+
+```{r, eval=FALSE}
+filter(
+  data_ca1a, 
+  !str_detect(GeoFIPS, "Note|CA1|Last|Source")
+  )
+```
+
+### Select
+
+We don't need the following columns so you can use the `select` function from the `dplyr` package.
+
+```{r, eval=FALSE}
+select(
+  data_ca1a, 
+  -Region, -LineCode, -IndustryClassification
+  )
+```
+
+
+### Convert Year to Variable
+
+The BEA named 47 columns by the year of the variables. This is fine for a table to read, but is a problem for analysis. All variables should be in a column. 
+
+To stack all the years into one column use the `gather` function from the `tidyr` package. You need to name the two new variables. In this case we will call them "year" and "value".
+
+```{r, eval=FALSE}
+gather(
+  data_ca1a, 
+  year, value, 
+  -(GeoFIPS:Description)
+  )
+```
+
+### Rename Variables
+
+I like lower-case names with underscores. To do this you can use the `rename` function from the `dplyr` package.
+
+```{r, eval=FALSE}
+rename(
+  data_ca1a, 
+  id_geos = GeoFIPS, name_geos = GeoName
+  )
+```
+
+### Rename Values
+
+Some times variable values should be changed or added. To do this use the `mutate` function from the `dplyr` package.
+
+```{r, eval=FALSE}
+mutate(
+  data_ca1a, 
+  GeoName = str_replace(GeoName, ", MO", "")
+  )
+```
+
+```{r, eval=FALSE}
+mutate(
+  data_ca1a, 
+  Description = case_when(
+    Description == "Personal income (thousands of dollars)"  ~ "incm_prsn", 
+    Description == "Population (persons) 1/"                 ~ "popl",
+    Description == "Per capita personal income (dollars) 2/" ~ "incm_popl"
+    )
+  )
+```
+
+## Tidy CA1
+
+Combine the above eliments into one chunk. Keep note of the pipes. 
+
+```{r}
+data_ca1a_tidy <- data_ca1a %>% 
+  # I don't need the following -------------------------------------------------
+  select(
+    -Region, -LineCode, -IndustryClassification
+    ) %>% 
+  
+  # I like more compact variable names -----------------------------------------
+  rename(
+    id_geos = GeoFIPS, name_geos = GeoName, name_sers = Table, 
+    variable = Description
+    ) %>% 
+  
+  # Don't want the notes at the end. Use Description file ----------------------
+  filter(
+    !str_detect(id_geos, "Note|CA1|Last|Source")
+    ) %>% 
+  
+  # Compact variable names before spread ---------------------------------------
+  mutate(
+    variable = case_when(
+      variable == "Personal income (thousands of dollars)"  ~ "incm_prsn",
+      variable == "Population (persons) 1/"                 ~ "popl",
+      variable == "Per capita personal income (dollars) 2/" ~ "incm_popl"
+      )
+    ) %>% 
+  
+  # Combine years into variable ------------------------------------------------
+  gather(
+    year, value, 
+    -(id_geos:variable)
+    ) %>% 
+  
+  # Spread variables -----------------------------------------------------------
+  spread(
+    variable, value
+    ) %>% 
+  
+  # Final variable clean up ----------------------------------------------------
+  mutate(
+    name_geos = str_replace(name_geos, ", MO| state total", ""), 
+    name_geos = str_replace(name_geos, "Ste\\.", "Sainte"),
+    name_geos = str_replace(name_geos, "St\\.", "Saint"), 
+    name_geos = str_replace(name_geos, "(Independent City)", "City"),
+    name_sers = str_to_lower(name_sers), 
+    year      = as.integer(year), 
+    incm_prsn = 1000 * incm_prsn # convert 1,000s of dollars to dollars
+    )
+  
+```
+
+On second thought, I don't want name_sers.
+
+```{r}
+data_ca1a_tidy <- data_ca1a_tidy %>% 
+  select(
+    -name_sers
+    )
+```
+
+## Import CA6N
+
+Now do the above work on "CA6N".
+
+```{r}
+# Identify correct variable types ----------------------------------------------
+type_cols <- str_c(
+  c(
+    rep("c", 7),   # Character variables
+    rep("d", 15)), # Year variables
+  collapse = ""    # Collapse into compact
+  )
+
+# BEA has flags ----------------------------------------------------------------
+isna_vars <- c(
+  "(NA)", "(D)", "(L)", "..."
+  ) 
+
+# Import -----------------------------------------------------------------------
+data_ca6n <- read_csv(
+  "data/CA6N_2001_2015_MO.csv", 
+  col_types = type_cols,
+  na        = isna_vars
+  ) %>% 
+  
+  # I like more compact variable names -----------------------------------------
+  rename(
+    id_geos = GeoFIPS, name_geos = GeoName, name_sers = Table, 
+    variable = Description
+    ) %>% 
+  
+  # Don't want the notes at the end. Use Description file ----------------------
+  filter(
+    !str_detect(id_geos, "Note|CA1|Last|Source")
+    ) %>% 
+
+  # Variable clean up ----------------------------------------------------------
+  mutate(
+    name_geos = str_replace(name_geos, ", MO| state total", ""), 
+    name_geos = str_replace(name_geos, "Ste\\.", "Sainte"),
+    name_geos = str_replace(name_geos, "St\\.", "Saint"), 
+    name_geos = str_replace(name_geos, "(Independent City)", "City"),
+    name_sers = str_to_lower(name_sers), 
+    variable  = str_replace(variable, " (thousands of dollars)", "") 
+    )
+```
+
+## Split CA6N
+
+I want a table with labor income, mean labor income, and total employment added to the CA1 table. I'll do this in two steps. 
+
+```{r}
+data_empl <- data_ca6n %>% 
+  # Pull out total compenation and compensation per employee -------------------
+  filter(
+    LineCode %in% c(1, 9)
+    ) %>% 
+  
+  # I don't need the following -------------------------------------------------
+  select(
+    -name_sers, -Region, -LineCode, -IndustryClassification
+    ) %>% 
+  
+  # Compact variable names before spread ---------------------------------------
+  mutate(
+    variable = case_when(
+      str_detect(variable, "Compensation of employees") ~ "incm_labr",
+      str_detect(variable, "Average compensation")      ~ "incm_labr_mean"
+      )
+    ) %>% 
+  
+  # Combine years into variable ------------------------------------------------
+  gather(
+    year, value, 
+    -(id_geos:variable)
+    ) %>% 
+  
+  # Spread variables -----------------------------------------------------------
+  spread(
+    variable, value
+    ) %>% 
+  
+  # Final Adjustments ----------------------------------------------------------
+  mutate(
+    year      = as.integer(year), 
+    incm_labr = 1000 * incm_labr, 
+    empl      = incm_labr / incm_labr_mean, # Cheap employment count (Table CA5)
+    empl      = round(empl)
+    )
+```
+
+### Add to CA1
+
+Use the `left_join` function from the `dplyr` package. The join requires a location and year identification: `id_geos` and `year`. I added `name_geos` so I don't get an extra copy of `name_geos`.
+
+```{r}
+data_ca1a_tidy <- data_ca1a_tidy %>% 
+  left_join(
+    data_empl, by = c("id_geos", "name_geos", "year")
+    )
+```
+
+## Tidy CA6N
+
+```{r}
+data_ca6n_tidy <- data_ca6n %>% 
+  # Pull out compensation per employee -----------------------------------------
+  filter(
+    LineCode != 9
+    ) %>% 
+  
+  # I don't need the following -------------------------------------------------
+  select(
+    -name_sers, -Region
+    ) %>% 
+  
+  # Rename variables -----------------------------------------------------------
+  rename(
+    id_incm_labr = LineCode, name_incm_labr = variable, 
+    id_indy = IndustryClassification
+    ) %>% 
+  
+  # To Title Names -------------------------------------------------------------
+  mutate(
+    name_incm_labr = str_to_title(name_incm_labr)
+    ) %>% 
+  
+  # Combine years into variable ------------------------------------------------
+  gather(
+    year, incm_labr, 
+    -(id_geos:name_incm_labr)
+    ) %>% 
+  
+  # Final Adjustments ----------------------------------------------------------
+  mutate(
+    year      = as.integer(year), 
+    incm_labr = 1000 * incm_labr
+    )
+```
+
+# Selected Areas
+
+```{r}
+names_geos <- c(
+  # State Total
+  "Missouri",
+  
+  # Target County
+  "Adair", 
+  
+  # Neighboring Counties
+  "Putnam", 
+  "Schuyler", 
+  "Scotland", 
+  "Knox",
+  "Macon",
+  "Linn", 
+  "Sullivan"
+  )
+```
+
+```{r}
+data_ca1a_subs <- data_ca1a_tidy %>% 
+  filter(
+    name_geos %in% names_geos
+    )
+
+data_ca6n_subs <- data_ca6n_tidy %>% 
+  filter(
+    name_geos %in% names_geos
+    )
+```
+
+# Save
+
+## As CSV
+
+```{r, eval=FALSE}
+write_csv(data_ca1a_subs, "data/data_ca1a.csv")
+write_csv(data_ca6n_subs, "data/data_ca6n.csv")
+```
+
+## As RDA
+
+```{r}
+save(
+  data_ca1a_subs, data_ca6n_subs, 
+  file = "data/gather.rda"
+  )
+```
+
+## As RDS
+
+```{r}
+write_rds(data_ca1a_subs, "data/data_ca1a.rds")
+write_rds(data_ca6n_subs, "data/data_ca6n.rds")
+```
+
